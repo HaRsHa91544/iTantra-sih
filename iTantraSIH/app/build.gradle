@@ -29,10 +29,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+
+    aaptOptions {
+        noCompress 'tflite', 'bin', 'fst', 'mdl', 'raw'
+    }
 }
 
 dependencies {
-
+    implementation 'com.alphacephei:vosk-android:0.3.75'
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity

@@ -1,38 +1,30 @@
 package com.example.itantra_sih;
 
+import com.example.itantra_sih.R;
+import android.content.Intent;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
-
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.example.itantra_sih.speech.tts.PiperEngine;
-import com.example.itantra_sih.speech.tts.TTSManager;
-
 public class MainActivity extends AppCompatActivity {
-    private TTSManager ttsManager;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ttsManager = new TTSManager(new PiperEngine(this));
+        // 1. Find the button by its ID
+        Button btnGoToMain3 = findViewById(R.id.btnGoToMain3);
 
-        Button speakButton = findViewById(R.id.speakButton);
-        speakButton.setOnClickListener(v -> {
-            ttsManager.speak("Define the data used between modules");
+        // 2. Set the click listener to handle navigation
+        btnGoToMain3.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // 3. Create an Intent to start MainActivity3
+                Intent intent = new Intent(MainActivity.this, MainActivity3.class);
+                startActivity(intent);
+            }
         });
-
-        Button stopButton = findViewById(R.id.stopButton);
-        stopButton.setOnClickListener(v->{
-            ttsManager.stop();
-        });
-    }
-
-    @Override
-    protected void onDestroy() {
-        if(ttsManager != null){
-            ttsManager.release();
-        }
-        super.onDestroy();
     }
 }
