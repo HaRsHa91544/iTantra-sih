@@ -45,4 +45,5 @@ dependencies {
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+    implementation("com.assemblyai:assemblyai-java:1.1.2")
 }
