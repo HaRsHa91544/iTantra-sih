@@ -21,7 +21,6 @@ public class OfflineTTS implements TTSEngine{
         }
 
         if (isReady) {
-            System.out.println("TTS IS READY");
             tts.speak(
                     text,
                     TextToSpeech.QUEUE_FLUSH,
