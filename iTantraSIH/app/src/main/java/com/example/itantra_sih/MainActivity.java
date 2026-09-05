@@ -1,11 +1,13 @@
 package com.example.itantra_sih;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.itantra_sih.speech.tts.OfflineTTS;
+import com.example.itantra_sih.speech.tts.PiperEngine;
 import com.example.itantra_sih.speech.tts.TTSManager;
 
 public class MainActivity extends AppCompatActivity {
@@ -15,11 +17,11 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ttsManager = new TTSManager(new OfflineTTS(this));
+        ttsManager = new TTSManager(new PiperEngine(this));
 
         Button speakButton = findViewById(R.id.speakButton);
         speakButton.setOnClickListener(v -> {
-            ttsManager.speak("Hello Harsha, Reddy, Prudvi, Ganesh, Divya");
+            ttsManager.speak("Define the data used between modules");
         });
 
         Button stopButton = findViewById(R.id.stopButton);
