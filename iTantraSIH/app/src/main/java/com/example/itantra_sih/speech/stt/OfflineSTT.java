@@ -81,17 +81,27 @@ public class OfflineSTT implements STTEngine, RecognitionListener {
         }
     }
 
-    @Override
-    public void acceptAudio(byte[] data, int length) {
-        // Handled automatically by SpeechService
-    }
-
+    /**
+     * Stop the current recognition session, release the native recognizer,
+     * and reset state so the next start() call starts fresh.
+     */
     @Override
     public void stop() {
         if (speechService != null) {
-            speechService.stop();
+            try {
+                speechService.stop();
+                speechService.shutdown();
+            } catch (Exception ignored) {
+            }
             speechService = null;
             Log.d(TAG, "SpeechService stopped.");
+        }
+        if (recognizer != null) {
+            try {
+                recognizer.close();
+            } catch (Exception ignored) {
+            }
+            recognizer = null;
         }
     }
 

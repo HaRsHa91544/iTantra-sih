@@ -34,14 +34,6 @@ public interface STTEngine {
     void start();
 
     /**
-     * Feed raw PCM audio data into the recognition model.
-     *
-     * @param data   PCM 16-bit Mono audio bytes
-     * @param length number of bytes read
-     */
-    void acceptAudio(byte[] data, int length);
-
-    /**
      * Stop the current recognition session and flush remaining audio.
      */
     void stop();

@@ -46,6 +46,7 @@ public class PiperEngine implements TTSEngine {
     private final ThreadPoolExecutor synthExecutor;
     private OfflineTts tts;
     private AudioTrack currentTrack;
+    private volatile boolean stopRequested = false;
     private boolean released = false;
 
     public PiperEngine(Context context) {
@@ -90,6 +91,7 @@ public class PiperEngine implements TTSEngine {
             if (released) return;
         }
         synthExecutor.getQueue().clear();
+        stopRequested = false;
         synthExecutor.execute(() -> {
             try {
                 GeneratedAudio audio;
@@ -102,6 +104,10 @@ public class PiperEngine implements TTSEngine {
                 }
                 if (audio == null || audio.getSamples().length == 0) {
                     Log.w(TAG, "no audio produced");
+                    return;
+                }
+                if (stopRequested) {
+                    Log.d(TAG, "synthesis cancelled by stop()");
                     return;
                 }
                 Log.i(TAG, "generated " + audio.getSamples().length + " samples @ "
@@ -195,7 +201,7 @@ public class PiperEngine implements TTSEngine {
         long start = System.currentTimeMillis();
         while (System.currentTimeMillis() - start < durationMs) {
             synchronized (LOCK) {
-                if (currentTrack == null) break;
+                if (stopRequested || currentTrack == null) break;
             }
             try {
                 Thread.sleep(20);
@@ -208,6 +214,8 @@ public class PiperEngine implements TTSEngine {
 
     @Override
     public void stop() {
+        stopRequested = true;
+        synthExecutor.getQueue().clear();
         synchronized (LOCK) {
             if (currentTrack != null) {
                 currentTrack.stop();

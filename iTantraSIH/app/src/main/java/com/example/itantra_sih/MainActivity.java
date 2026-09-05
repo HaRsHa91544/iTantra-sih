@@ -28,8 +28,11 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.example.itantra_sih.application.VoiceCommunication;
 import com.example.itantra_sih.speech.stt.OfflineSTT;
 import com.example.itantra_sih.speech.stt.STTEngine;
+import com.example.itantra_sih.speech.tts.PiperEngine;
+import com.example.itantra_sih.speech.tts.TTSEngine;
 import com.example.itantra_sih.wifidirect.DeviceAdapter;
 import com.example.itantra_sih.wifidirect.WifiDirectBroadcastReceiver;
 import com.example.itantra_sih.wifidirect.WifiDirectSocketManager;
@@ -38,9 +41,18 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+/**
+ * Splash screen to the whole voice-to-voice loop. Owns ONLY UI wiring:
+ * it binds views, delegates STT/TTS/Wi-Fi control to VoiceCommunication,
+ * and forwards Wi-Fi Direct connection lifecycle events to the UI.
+ *
+ * The actual voice pipeline lives in VoiceCommunication:
+ *   Phone A: speak -> STT -> Message -> Wi-Fi
+ *   Phone B: Wi-Fi -> Message -> TTS -> speak
+ */
 public class MainActivity extends AppCompatActivity implements
         WifiDirectBroadcastReceiver.WifiDirectEventListener,
-        WifiDirectSocketManager.SocketEventListener {
+        VoiceCommunication.Listener {
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSIONS_REQUEST_CODE = 1001;
@@ -64,6 +76,8 @@ public class MainActivity extends AppCompatActivity implements
 
     // Speech-to-Text Engine state
     private STTEngine sttEngine;
+    private TTSEngine ttsEngine;
+    private VoiceCommunication voiceCommunication;
     private boolean isRecording = false;
     private boolean isModelReady = false;
     private boolean isWifiConnected = false;
@@ -79,7 +93,7 @@ public class MainActivity extends AppCompatActivity implements
     private final List<WifiP2pDevice> peerList = new ArrayList<>();
     private DeviceAdapter deviceAdapter;
 
-    // Offline Socket Manager
+    // Offline Socket Manager (connection lifecycle only; payloads go via coordinator)
     private WifiDirectSocketManager socketManager;
 
     private boolean isReceiverRegistered = false;
@@ -97,7 +111,7 @@ public class MainActivity extends AppCompatActivity implements
 
         initViews();
         initWifiDirect();
-        initSTTEngine();
+        initEngines();
         setupListeners();
         checkAndRequestPermissions();
     }
@@ -125,7 +139,22 @@ public class MainActivity extends AppCompatActivity implements
         deviceAdapter = new DeviceAdapter(this, peerList);
         lvDevices.setAdapter(deviceAdapter);
 
-        socketManager = new WifiDirectSocketManager(this);
+        socketManager = new WifiDirectSocketManager(new WifiDirectSocketManager.SocketEventListener() {
+            @Override
+            public void onSocketConnected(boolean isServer, String remoteAddress) {
+                MainActivity.this.onSocketConnected(isServer, remoteAddress);
+            }
+
+            @Override
+            public void onSocketDisconnected() {
+                MainActivity.this.onSocketDisconnected();
+            }
+
+            @Override
+            public void onError(String errorMessage) {
+                MainActivity.this.onSocketError(errorMessage);
+            }
+        });
     }
 
     private void initWifiDirect() {
@@ -146,41 +175,13 @@ public class MainActivity extends AppCompatActivity implements
         intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION);
     }
 
-    private void initSTTEngine() {
+    private void initEngines() {
+        // Black boxes are created here and handed to the coordinator.
         sttEngine = new OfflineSTT();
-        sttEngine.setOnResultListener(new STTEngine.OnResultListener() {
-            @Override
-            public void onPartialResult(String hypothesis) {
-                runOnUiThread(() -> {
-                    if (!hypothesis.isEmpty()) {
-                        tvSpeakingStatus.setVisibility(View.VISIBLE);
-                        tvSpeakingStatus.setText("Listening: " + hypothesis + "...");
-                    }
-                });
-            }
+        ttsEngine = new PiperEngine(this);
 
-            @Override
-            public void onFinalResult(String text) {
-                runOnUiThread(() -> {
-                    String spoken = text.trim();
-                    if (!spoken.isEmpty()) {
-                        tvSpeakingStatus.setVisibility(View.VISIBLE);
-                        tvSpeakingStatus.setText("Sent: \"" + spoken + "\"");
-
-                        // Convert voice input into text and send to another mobile through Wi-Fi Direct
-                        if (socketManager != null) {
-                            socketManager.sendMessage(spoken);
-                        }
-                    }
-                });
-            }
-
-            @Override
-            public void onError(Exception e) {
-                Log.e(TAG, "STT Engine error", e);
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "STT Error: " + e.getMessage(), Toast.LENGTH_SHORT).show());
-            }
-        });
+        voiceCommunication = new VoiceCommunication(sttEngine, ttsEngine, socketManager);
+        voiceCommunication.setListener(this);
 
         tvModelStatus.setText("Model: Loading...");
         sttEngine.init(this, new STTEngine.OnInitListener() {
@@ -213,7 +214,7 @@ public class MainActivity extends AppCompatActivity implements
             confirmAndConnect(device);
         });
 
-        // Speak Button: Takes voice input, converts to text, and sends via Wi-Fi Direct
+        // Speak Button: Takes voice input via STT, sends through the coordinator
         btnToggleSpeaking.setOnClickListener(v -> {
             if (!isWifiConnected) {
                 Toast.makeText(this, "Connect to another device via Wi-Fi Direct first", Toast.LENGTH_SHORT).show();
@@ -268,8 +269,8 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     private void startSpeaking() {
-        if (sttEngine != null) {
-            sttEngine.start();
+        if (voiceCommunication != null) {
+            voiceCommunication.startListening();
         }
         isRecording = true;
         updateSpeakButtonState();
@@ -279,8 +280,8 @@ public class MainActivity extends AppCompatActivity implements
 
     private void stopSpeaking() {
         isRecording = false;
-        if (sttEngine != null) {
-            sttEngine.stop();
+        if (voiceCommunication != null) {
+            voiceCommunication.stopListening();
         }
         updateSpeakButtonState();
     }
@@ -538,10 +539,9 @@ public class MainActivity extends AppCompatActivity implements
         });
     }
 
-    // ==================== SocketEventListener Callbacks ====================
+    // ==================== Socket Connection Callbacks ====================
 
-    @Override
-    public void onSocketConnected(boolean isServer, String remoteAddress) {
+    private void onSocketConnected(boolean isServer, String remoteAddress) {
         isWifiConnected = true;
         runOnUiThread(() -> {
             tvConnectionStatus.setText("Connected (Offline Socket Active)");
@@ -550,22 +550,51 @@ public class MainActivity extends AppCompatActivity implements
         });
     }
 
+    private void onSocketDisconnected() {
+        isWifiConnected = false;
+        runOnUiThread(() -> updateSpeakButtonState());
+    }
+
+    private void onSocketError(String errorMessage) {
+        Log.e(TAG, "Socket error: " + errorMessage);
+    }
+
+    // ==================== VoiceCommunication.Listener ====================
+
     @Override
-    public void onMessageReceived(String message) {
+    public void onPartialResult(String hypothesis) {
         runOnUiThread(() -> {
-            // Displays received text from the peer mobile under "Received Data"
-            appendReceivedData(message);
+            if (isRecording && !hypothesis.isEmpty()) {
+                tvSpeakingStatus.setVisibility(View.VISIBLE);
+                tvSpeakingStatus.setText("Listening: " + hypothesis + "...");
+            }
         });
     }
 
     @Override
-    public void onSocketDisconnected() {
-        runOnUiThread(() -> updateSpeakButtonState());
+    public void onMessageSent(String text) {
+        runOnUiThread(() -> {
+            tvSpeakingStatus.setVisibility(View.VISIBLE);
+            tvSpeakingStatus.setText("Sent: \"" + text + "\"");
+        });
+    }
+
+    @Override
+    public void onMessageReceived(String text) {
+        runOnUiThread(() -> appendReceivedData(text));
+    }
+
+    @Override
+    public void onTtsStarted(String text) {
+        runOnUiThread(() -> {
+            tvSpeakingStatus.setVisibility(View.VISIBLE);
+            tvSpeakingStatus.setText("Speaking: \"" + text + "\"...");
+        });
     }
 
     @Override
     public void onError(String errorMessage) {
-        runOnUiThread(() -> Log.e(TAG, "Socket error: " + errorMessage));
+        runOnUiThread(() -> Toast.makeText(MainActivity.this, errorMessage, Toast.LENGTH_SHORT).show());
     }
 
     private void appendReceivedData(String message) {
@@ -621,12 +650,12 @@ public class MainActivity extends AppCompatActivity implements
         if (isRecording) {
             stopSpeaking();
         }
-        if (sttEngine != null) {
-            sttEngine.destroy();
-            sttEngine = null;
+        if (voiceCommunication != null) {
+            voiceCommunication.release();
+            voiceCommunication = null;
         }
         if (socketManager != null) {
-            socketManager.stop();
+            socketManager.shutdown();
         }
         if (wifiP2pManager != null && channel != null) {
             try {

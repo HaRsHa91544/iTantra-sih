@@ -31,7 +31,7 @@ android {
     }
 
     aaptOptions {
-        noCompress 'tflite', 'bin', 'fst', 'mdl', 'raw'
+        noCompress 'onnx', 'tflite', 'bin', 'fst', 'mdl', 'raw'
     }
 }
 
@@ -45,5 +45,4 @@ dependencies {
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
-    implementation("com.assemblyai:assemblyai-java:1.1.2")
 }
