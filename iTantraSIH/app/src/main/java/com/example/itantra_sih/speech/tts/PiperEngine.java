@@ -22,14 +22,17 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Piper (en_IN-spicor) engine implemented with sherpa-onnx.
  *
  * Model + tokens are read straight from Android assets; only espeak-ng-data
  * is extracted to disk because the espeak phonemizer needs native file access.
- * Synthesis runs on a background thread, audio plays through AudioTrack.
- * Fully offline.
+ * All generation and playback work is serialized on a single worker thread so
+ * the native TTS object is never used concurrently. Fully offline.
  */
 public class PiperEngine implements TTSEngine {
     private static final String TAG = "PiperEngine";
@@ -40,13 +43,15 @@ public class PiperEngine implements TTSEngine {
     private static final String ESPEAK_ASSET = "lespk";
 
     private final Context context;
+    private final ThreadPoolExecutor synthExecutor;
     private OfflineTts tts;
     private AudioTrack currentTrack;
     private boolean released = false;
-    private volatile Thread worker;
 
     public PiperEngine(Context context) {
         this.context = context.getApplicationContext();
+        this.synthExecutor = new ThreadPoolExecutor(1, 1, 0L,
+                TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
         loadAsync();
     }
 
@@ -82,16 +87,17 @@ public class PiperEngine implements TTSEngine {
     public void speak(String text) {
         if (text == null || text.isEmpty()) return;
         synchronized (LOCK) {
-            if (tts == null) {
-                Log.w(TAG, "speak() before TTS ready, ignoring");
-                return;
-            }
+            if (released) return;
         }
-        worker = new Thread(() -> {
+        synthExecutor.getQueue().clear();
+        synthExecutor.execute(() -> {
             try {
                 GeneratedAudio audio;
                 synchronized (LOCK) {
-                    if (released || tts == null) return;
+                    if (released || tts == null) {
+                        Log.w(TAG, "speak() before TTS ready, ignoring");
+                        return;
+                    }
                     audio = tts.generate(text, 0, 1.0f);
                 }
                 if (audio == null || audio.getSamples().length == 0) {
@@ -106,8 +112,7 @@ public class PiperEngine implements TTSEngine {
             } catch (Exception e) {
                 Log.e(TAG, "synthesis failed", e);
             }
-        }, "PiperEngine-synth");
-        worker.start();
+        });
     }
 
     private String extractEspeakData() throws IOException {
@@ -142,6 +147,10 @@ public class PiperEngine implements TTSEngine {
     }
 
     private void play(float[] samples, int sampleRate) {
+        synchronized (LOCK) {
+            if (released) return;
+        }
+
         float peak = 0f;
         for (float s : samples) {
             peak = Math.max(peak, Math.abs(s));
@@ -173,7 +182,14 @@ public class PiperEngine implements TTSEngine {
         synchronized (LOCK) {
             currentTrack = track;
         }
-        track.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+        int written = track.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+        if (written != pcm.length) {
+            Log.e(TAG, "AudioTrack short write: " + written + "/" + pcm.length + " samples");
+        }
+        if (written <= 0) {
+            releaseTrack(track);
+            return;
+        }
         track.play();
         long durationMs = (long) (samples.length / (double) sampleRate * 1000);
         long start = System.currentTimeMillis();
@@ -219,12 +235,18 @@ public class PiperEngine implements TTSEngine {
                 currentTrack.stop();
                 currentTrack = null;
             }
+        }
+        synthExecutor.shutdown();
+        try {
+            synthExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        synchronized (LOCK) {
             if (tts != null) {
                 tts.release();
                 tts = null;
             }
         }
-        Thread w = worker;
-        if (w != null) w.interrupt();
     }
 }
