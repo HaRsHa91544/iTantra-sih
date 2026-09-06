@@ -31,7 +31,7 @@ android {
     }
 
     aaptOptions {
-        noCompress 'tflite', 'bin', 'fst', 'mdl', 'raw'
+        noCompress 'tflite', 'bin', 'fst', 'mdl', 'raw', 'onnx'
     }
 }
 
@@ -43,6 +43,7 @@ dependencies {
     implementation libs.constraintlayout
     implementation files('libs/sherpa-onnx-1.13.7.aar')
     implementation 'com.alphacephei:vosk-android:0.3.75'
+    implementation 'com.google.android.gms:play-services-nearby:19.3.0'
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core

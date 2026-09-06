@@ -47,6 +47,16 @@ public interface STTEngine {
     void stop();
 
     /**
+     * Load a specific language model into RAM dynamically.
+     */
+    void loadLanguage(Context context, String languageName, OnInitListener listener);
+
+    /**
+     * Unload the current model from RAM.
+     */
+    void unloadModel();
+
+    /**
      * Release all model and native resources.
      */
     void destroy();

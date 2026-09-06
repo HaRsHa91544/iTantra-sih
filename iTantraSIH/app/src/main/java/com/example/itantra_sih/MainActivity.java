@@ -1,21 +1,17 @@
 package com.example.itantra_sih;
 
 import android.Manifest;
-import android.content.Context;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.net.wifi.WpsInfo;
-import android.net.wifi.p2p.WifiP2pConfig;
-import android.net.wifi.p2p.WifiP2pDevice;
-import android.net.wifi.p2p.WifiP2pInfo;
-import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -28,66 +24,61 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.example.itantra_sih.nearby.NearbyConnectionsManager;
+import com.example.itantra_sih.nearby.NearbyDevice;
+import com.example.itantra_sih.nearby.NearbyDeviceAdapter;
 import com.example.itantra_sih.speech.stt.OfflineSTT;
 import com.example.itantra_sih.speech.stt.STTEngine;
-import com.example.itantra_sih.speech.tts.PiperEngine;
 import com.example.itantra_sih.speech.tts.TTSManager;
-import com.example.itantra_sih.wifidirect.DeviceAdapter;
-import com.example.itantra_sih.wifidirect.WifiDirectBroadcastReceiver;
-import com.example.itantra_sih.wifidirect.WifiDirectSocketManager;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements
-        WifiDirectBroadcastReceiver.WifiDirectEventListener,
-        WifiDirectSocketManager.SocketEventListener {
+        NearbyConnectionsManager.NearbyEventListener {
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSIONS_REQUEST_CODE = 1001;
-    private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
+    private static final int REQUEST_RECORD_AUDIO_PERMISSION = 2001;
 
-    // Wi-Fi Direct UI elements
+    // UI elements - Connection
     private TextView tvConnectionStatus;
     private TextView tvMyDeviceDetails;
     private TextView tvRoleDetails;
     private TextView tvEmptyDevices;
+    private Button btnAdvertise;
     private Button btnDiscover;
     private Button btnDisconnect;
     private ListView lvDevices;
 
-    // Received Data & Speech UI elements
+    // UI elements - Language & Received Data
+    private Spinner spLanguage;
     private TextView tvModelStatus;
     private ScrollView scrollReceivedData;
     private TextView tvReceivedData;
     private TextView tvSpeakingStatus;
     private Button btnToggleSpeaking;
+    private Button btnPlayReceivedAudio;
+
+    // Text-to-Speech Engine
+    private TTSManager ttsManager;
+
+    // Supported Languages
+    private final String[] supportedLanguages = {"English", "Telugu", "Hindi", "Kannada", "Tamil"};
+    private int currentLanguageIndex = 0;
+    private boolean isUserActionSpinner = false;
 
     // Speech-to-Text Engine state
     private STTEngine sttEngine;
     private boolean isRecording = false;
     private boolean isModelReady = false;
-    private boolean isWifiConnected = false;
     private final StringBuilder receivedDataHistory = new StringBuilder();
 
-    // Offline Speech Engine (Piper) used to read out received messages
-    private TTSManager ttsManager;
-
-    // Wi-Fi Direct objects
-    private WifiP2pManager wifiP2pManager;
-    private WifiP2pManager.Channel channel;
-    private WifiDirectBroadcastReceiver receiver;
-    private IntentFilter intentFilter;
-
-    // Devices list
-    private final List<WifiP2pDevice> peerList = new ArrayList<>();
-    private DeviceAdapter deviceAdapter;
-
-    // Offline Socket Manager
-    private WifiDirectSocketManager socketManager;
-
-    private boolean isReceiverRegistered = false;
+    // Google Nearby Connections Manager
+    private NearbyConnectionsManager nearbyManager;
+    private final List<NearbyDevice> discoveredDevices = new ArrayList<>();
+    private NearbyDeviceAdapter deviceAdapter;
+    private String localDeviceName;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,8 +91,13 @@ public class MainActivity extends AppCompatActivity implements
             return insets;
         });
 
+        localDeviceName = Build.MANUFACTURER + " " + Build.MODEL;
+
+        ttsManager = new TTSManager(this);
+
         initViews();
-        initWifiDirect();
+        setupLanguageDropdown();
+        initNearbyConnections();
         initSTTEngine();
         setupListeners();
         checkAndRequestPermissions();
@@ -113,45 +109,102 @@ public class MainActivity extends AppCompatActivity implements
         tvMyDeviceDetails = findViewById(R.id.tvMyDeviceDetails);
         tvRoleDetails = findViewById(R.id.tvRoleDetails);
         tvEmptyDevices = findViewById(R.id.tvEmptyDevices);
+        btnAdvertise = findViewById(R.id.btnAdvertise);
         btnDiscover = findViewById(R.id.btnDiscover);
         btnDisconnect = findViewById(R.id.btnDisconnect);
         lvDevices = findViewById(R.id.lvDevices);
 
-        // Received Data & Speech Views
+        tvMyDeviceDetails.setText("My Device: " + localDeviceName);
+
+        // Language & Received Data Views
+        spLanguage = findViewById(R.id.spLanguage);
         tvModelStatus = findViewById(R.id.tvModelStatus);
         scrollReceivedData = findViewById(R.id.scrollReceivedData);
         tvReceivedData = findViewById(R.id.tvReceivedData);
         tvSpeakingStatus = findViewById(R.id.tvSpeakingStatus);
         btnToggleSpeaking = findViewById(R.id.btnToggleSpeaking);
+        btnPlayReceivedAudio = findViewById(R.id.btnPlayReceivedAudio);
 
-        // Speak button is disabled until devices are connected
-        updateSpeakButtonState();
-
-        deviceAdapter = new DeviceAdapter(this, peerList);
+        deviceAdapter = new NearbyDeviceAdapter(this, discoveredDevices);
         lvDevices.setAdapter(deviceAdapter);
 
-        socketManager = new WifiDirectSocketManager(this);
-
-        // Offline Piper TTS: init starts model loading off the main thread
-        ttsManager = new TTSManager(new PiperEngine(this));
+        updateSpeakButtonState();
     }
 
-    private void initWifiDirect() {
-        wifiP2pManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
-        if (wifiP2pManager != null) {
-            channel = wifiP2pManager.initialize(this, getMainLooper(), () -> {
-                Log.w(TAG, "Wi-Fi Direct channel lost. Reinitializing...");
-                initWifiDirect();
-            });
-        }
+    private void setupLanguageDropdown() {
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                supportedLanguages
+        );
+        spLanguage.setAdapter(adapter);
+        spLanguage.setSelection(0, false); // Default English
 
-        receiver = new WifiDirectBroadcastReceiver(wifiP2pManager, channel, this);
+        spLanguage.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!isUserActionSpinner) {
+                    isUserActionSpinner = true;
+                    return;
+                }
 
-        intentFilter = new IntentFilter();
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION);
+                if (position != currentLanguageIndex) {
+                    String selectedLang = supportedLanguages[position];
+
+                    // Display popup asking user to accept/decline model import
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("Import " + selectedLang + " Model")
+                            .setMessage("Do you want to import and load the " + selectedLang + " language model into RAM?")
+                            .setPositiveButton("Accept", (dialog, which) -> {
+                                currentLanguageIndex = position;
+                                loadLanguageModel(selectedLang);
+                            })
+                            .setNegativeButton("Decline", (dialog, which) -> {
+                                // Revert to previously active language
+                                isUserActionSpinner = false;
+                                spLanguage.setSelection(currentLanguageIndex);
+                            })
+                            .setCancelable(false)
+                            .show();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+    }
+
+    private void loadLanguageModel(String language) {
+        runOnUiThread(() -> {
+            isModelReady = false;
+            tvModelStatus.setText("Model: Loading " + language + " into RAM...");
+            updateSpeakButtonState();
+            Toast.makeText(this, "Loading " + language + " model into RAM, please wait...", Toast.LENGTH_SHORT).show();
+        });
+
+        sttEngine.loadLanguage(this, language, new STTEngine.OnInitListener() {
+            @Override
+            public void onReady() {
+                runOnUiThread(() -> {
+                    isModelReady = true;
+                    tvModelStatus.setText("Model: " + language + " (Ready in RAM)");
+                    updateSpeakButtonState();
+                    Toast.makeText(MainActivity.this, language + " model loaded into RAM!", Toast.LENGTH_SHORT).show();
+                });
+            }
+
+            @Override
+            public void onError(Exception e) {
+                runOnUiThread(() -> {
+                    tvModelStatus.setText("Model: Failed (" + language + ")");
+                    Toast.makeText(MainActivity.this, "Failed to load " + language + " model: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
+    private void initNearbyConnections() {
+        nearbyManager = new NearbyConnectionsManager(this, this);
     }
 
     private void initSTTEngine() {
@@ -175,9 +228,9 @@ public class MainActivity extends AppCompatActivity implements
                         tvSpeakingStatus.setVisibility(View.VISIBLE);
                         tvSpeakingStatus.setText("Sent: \"" + spoken + "\"");
 
-                        // Convert voice input into text and send to another mobile through Wi-Fi Direct
-                        if (socketManager != null) {
-                            socketManager.sendMessage(spoken);
+                        // Send speech text to peer over Google Nearby Connections link
+                        if (nearbyManager != null && nearbyManager.isConnected()) {
+                            nearbyManager.sendPayload(spoken);
                         }
                     }
                 });
@@ -190,45 +243,43 @@ public class MainActivity extends AppCompatActivity implements
             }
         });
 
-        tvModelStatus.setText("Model: Loading...");
-        sttEngine.init(this, new STTEngine.OnInitListener() {
-            @Override
-            public void onReady() {
-                runOnUiThread(() -> {
-                    isModelReady = true;
-                    tvModelStatus.setText("Model: Ready");
-                    updateSpeakButtonState();
-                });
-            }
-
-            @Override
-            public void onError(Exception e) {
-                runOnUiThread(() -> {
-                    tvModelStatus.setText("Model: Failed");
-                    Toast.makeText(MainActivity.this, "Failed to load speech model: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                });
-            }
-        });
+        // Load default English model initially
+        loadLanguageModel(supportedLanguages[0]);
     }
 
     private void setupListeners() {
-        btnDiscover.setOnClickListener(v -> startPeerDiscovery());
+        btnAdvertise.setOnClickListener(v -> {
+            checkAndRequestPermissions();
+            nearbyManager.startAdvertising(localDeviceName);
+        });
 
-        btnDisconnect.setOnClickListener(v -> disconnectFromPeer());
+        btnDiscover.setOnClickListener(v -> {
+            checkAndRequestPermissions();
+            discoveredDevices.clear();
+            deviceAdapter.notifyDataSetChanged();
+            tvEmptyDevices.setVisibility(View.VISIBLE);
+            tvEmptyDevices.setText("Scanning for nearby BLE beacons (<1s)...");
+            nearbyManager.startDiscovery();
+        });
+
+        btnDisconnect.setOnClickListener(v -> {
+            nearbyManager.disconnect();
+            onDisconnected("local");
+        });
 
         lvDevices.setOnItemClickListener((parent, view, position, id) -> {
-            WifiP2pDevice device = peerList.get(position);
+            NearbyDevice device = discoveredDevices.get(position);
             confirmAndConnect(device);
         });
 
-        // Speak Button: Takes voice input, converts to text, and sends via Wi-Fi Direct
+        // Speak Button
         btnToggleSpeaking.setOnClickListener(v -> {
-            if (!isWifiConnected) {
-                Toast.makeText(this, "Connect to another device via Wi-Fi Direct first", Toast.LENGTH_SHORT).show();
+            if (!nearbyManager.isConnected()) {
+                Toast.makeText(this, "Connect to another device first", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isModelReady) {
-                Toast.makeText(this, "Speech model is still loading, please wait...", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Speech model is still loading into RAM, please wait...", Toast.LENGTH_SHORT).show();
                 return;
             }
             if (isRecording) {
@@ -237,14 +288,42 @@ public class MainActivity extends AppCompatActivity implements
                 checkMicrophonePermissionAndStart();
             }
         });
+
+        // Listen / Play Received Audio via English TTS
+        if (btnPlayReceivedAudio != null) {
+            btnPlayReceivedAudio.setOnClickListener(v -> {
+                String textToSpeak = tvReceivedData.getText().toString().trim();
+                if (textToSpeak.isEmpty()
+                        || textToSpeak.startsWith("Waiting for data")
+                        || textToSpeak.startsWith("Disconnected")
+                        || textToSpeak.startsWith("Connected! Waiting")) {
+                    Toast.makeText(this, "No received speech text to play yet", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (ttsManager != null) {
+                    ttsManager.speak(textToSpeak);
+                    Toast.makeText(this, "Speaking text aloud...", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     }
 
-    /**
-     * Updates the Speak button state based on Wi-Fi Direct connection and speech model readiness.
-     * The button is enabled ONLY when two users are connected.
-     */
+    private void confirmAndConnect(NearbyDevice device) {
+        new AlertDialog.Builder(this)
+                .setTitle("Connect to Device")
+                .setMessage("Do you want to connect to " + device.getDeviceName() + "?")
+                .setPositiveButton("Connect", (dialog, which) -> {
+                    device.setStatus("Connecting...");
+                    deviceAdapter.notifyDataSetChanged();
+                    nearbyManager.requestConnection(localDeviceName, device.getEndpointId());
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
     private void updateSpeakButtonState() {
-        if (!isWifiConnected) {
+        boolean connected = nearbyManager != null && nearbyManager.isConnected();
+        if (!connected) {
             btnToggleSpeaking.setEnabled(false);
             btnToggleSpeaking.setText("Start speaking");
             if (isRecording) {
@@ -252,16 +331,13 @@ public class MainActivity extends AppCompatActivity implements
             }
         } else if (!isModelReady) {
             btnToggleSpeaking.setEnabled(false);
-            btnToggleSpeaking.setText("Loading speech model...");
+            btnToggleSpeaking.setText("Loading model...");
         } else {
             btnToggleSpeaking.setEnabled(true);
             btnToggleSpeaking.setText(isRecording ? "Stop Speaking" : "Start speaking");
         }
     }
 
-    /**
-     * Asks for RECORD_AUDIO permission ONLY when the user clicks 'Start speaking'.
-     */
     private void checkMicrophonePermissionAndStart() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -294,28 +370,42 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     /**
-     * Check and request runtime permissions for Wi-Fi Direct (NEARBY_WIFI_DEVICES / LOCATION).
-     * RECORD_AUDIO is requested on demand when the user clicks 'Start speaking'.
+     * Runtime permissions for Nearby Connections (BLE & Wi-Fi) based on Android version.
      */
     private void checkAndRequestPermissions() {
-        List<String> requiredPermissions = new ArrayList<>();
+        List<String> permissions = new ArrayList<>();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // API 31+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+                    != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE);
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // API 33+
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
                     != PackageManager.PERMISSION_GRANTED) {
-                requiredPermissions.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+                permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES);
             }
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
-            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
         }
 
-        if (!requiredPermissions.isEmpty()) {
+        if (!permissions.isEmpty()) {
             ActivityCompat.requestPermissions(
                     this,
-                    requiredPermissions.toArray(new String[0]),
+                    permissions.toArray(new String[0]),
                     PERMISSIONS_REQUEST_CODE
             );
         }
@@ -327,243 +417,108 @@ public class MainActivity extends AppCompatActivity implements
 
         if (requestCode == PERMISSIONS_REQUEST_CODE) {
             boolean allGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
+            for (int res : grantResults) {
+                if (res != PackageManager.PERMISSION_GRANTED) {
                     allGranted = false;
                     break;
                 }
             }
             if (allGranted) {
-                Toast.makeText(this, "Permissions granted for Wi-Fi Direct", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permissions granted for Nearby Connections", Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "Wi-Fi Direct permissions are required for discovery", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Bluetooth & Wi-Fi permissions required for discovery", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_RECORD_AUDIO_PERMISSION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startSpeaking();
             } else {
-                Toast.makeText(this, "Microphone permission is required to record audio", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Microphone permission required to record audio", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
-    private void startPeerDiscovery() {
-        if (wifiP2pManager == null || channel == null) {
-            Toast.makeText(this, "Wi-Fi Direct is not supported on this device", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        checkAndRequestPermissions();
-
-        try {
-            tvEmptyDevices.setText("Searching for nearby devices...");
-            wifiP2pManager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Discovery started", Toast.LENGTH_SHORT).show();
-                        btnDiscover.setEnabled(false);
-                        btnDiscover.postDelayed(() -> btnDiscover.setEnabled(true), 10000);
-                    });
-                }
-
-                @Override
-                public void onFailure(int reasonCode) {
-                    runOnUiThread(() -> {
-                        String reason = getFailureReason(reasonCode);
-                        Toast.makeText(MainActivity.this, "Discovery failed: " + reason, Toast.LENGTH_SHORT).show();
-                        tvEmptyDevices.setText("Discovery failed (" + reason + "). Make sure Wi-Fi & Location are enabled.");
-                    });
-                }
-            });
-        } catch (SecurityException e) {
-            Log.e(TAG, "SecurityException during discoverPeers", e);
-            Toast.makeText(this, "Permission missing for peer discovery", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void confirmAndConnect(WifiP2pDevice device) {
-        String deviceName = (device.deviceName != null && !device.deviceName.isEmpty())
-                ? device.deviceName : device.deviceAddress;
-
-        new AlertDialog.Builder(this)
-                .setTitle("Connect to Device")
-                .setMessage("Do you want to connect to " + deviceName + " via Wi-Fi Direct?")
-                .setPositiveButton("Connect", (dialog, which) -> connectToDevice(device))
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void connectToDevice(WifiP2pDevice device) {
-        if (wifiP2pManager == null || channel == null) return;
-
-        WifiP2pConfig config = new WifiP2pConfig();
-        config.deviceAddress = device.deviceAddress;
-        config.wps.setup = WpsInfo.PBC;
-
-        runOnUiThread(() -> {
-            tvConnectionStatus.setText("Connecting...");
-            tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_discovering));
-        });
-
-        try {
-            wifiP2pManager.connect(channel, config, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Connection initiated to " + device.deviceName, Toast.LENGTH_SHORT).show();
-                    });
-                }
-
-                @Override
-                public void onFailure(int reasonCode) {
-                    runOnUiThread(() -> {
-                        String reason = getFailureReason(reasonCode);
-                        Toast.makeText(MainActivity.this, "Connection failed: " + reason, Toast.LENGTH_SHORT).show();
-                        tvConnectionStatus.setText("Disconnected");
-                        tvConnectionStatus.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.status_disconnected));
-                    });
-                }
-            });
-        } catch (SecurityException e) {
-            Log.e(TAG, "SecurityException during connect", e);
-            Toast.makeText(this, "Permission missing to connect to peer", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void disconnectFromPeer() {
-        if (wifiP2pManager != null && channel != null) {
-            wifiP2pManager.removeGroup(channel, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    onDisconnected();
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Disconnected successfully", Toast.LENGTH_SHORT).show());
-                }
-
-                @Override
-                public void onFailure(int reasonCode) {
-                    Log.w(TAG, "removeGroup failed with code: " + reasonCode);
-                    onDisconnected();
-                }
-            });
-        }
-        if (socketManager != null) {
-            socketManager.stop();
-        }
-    }
-
-    // ==================== WifiDirectEventListener Callbacks ====================
+    // ==================== NearbyEventListener Callbacks ====================
 
     @Override
-    public void onWifiDirectEnabled(boolean isEnabled) {
+    public void onEndpointFound(String endpointId, String endpointName) {
         runOnUiThread(() -> {
-            if (!isEnabled) {
-                tvConnectionStatus.setText("Wi-Fi Disabled");
-                tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
-                Toast.makeText(this, "Please enable Wi-Fi for Wi-Fi Direct", Toast.LENGTH_LONG).show();
+            boolean exists = false;
+            for (NearbyDevice d : discoveredDevices) {
+                if (d.getEndpointId().equals(endpointId)) {
+                    exists = true;
+                    break;
+                }
             }
-        });
-    }
-
-    @Override
-    public void onPeersDiscovered(Collection<WifiP2pDevice> peers) {
-        runOnUiThread(() -> {
-            peerList.clear();
-            if (peers != null && !peers.isEmpty()) {
-                peerList.addAll(peers);
+            if (!exists) {
+                discoveredDevices.add(new NearbyDevice(endpointId, endpointName, "Available"));
+                deviceAdapter.notifyDataSetChanged();
                 tvEmptyDevices.setVisibility(View.GONE);
                 lvDevices.setVisibility(View.VISIBLE);
-            } else {
-                tvEmptyDevices.setText("No nearby Wi-Fi Direct devices found.");
-                tvEmptyDevices.setVisibility(View.VISIBLE);
             }
-            deviceAdapter.notifyDataSetChanged();
         });
     }
 
-    /**
-     * Called when Wi-Fi Direct connection info is available.
-     * Updates UI on the UI thread to display "Connected" and enables Speak.
-     */
     @Override
-    public void onConnectionInfoAvailable(WifiP2pInfo wifiP2pInfo) {
-        if (wifiP2pInfo != null && wifiP2pInfo.groupFormed) {
-            isWifiConnected = true;
-            runOnUiThread(() -> {
-                tvConnectionStatus.setText("Connected");
-                tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
-
-                btnDisconnect.setEnabled(true);
-                updateSpeakButtonState();
-
-                if (receivedDataHistory.length() == 0) {
-                    tvReceivedData.setText("Connected! Waiting for speech data from peer...\n");
-                }
-
-                if (wifiP2pInfo.isGroupOwner) {
-                    tvRoleDetails.setText("Role: Group Owner (Host) | Local IP: " +
-                            (wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
-                    // Start host server socket completely offline
-                    socketManager.startServer(WifiDirectSocketManager.DEFAULT_PORT);
-                } else {
-                    tvRoleDetails.setText("Role: Client | Host IP: " +
-                            (wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
-                    // Connect client socket directly to host IP completely offline
-                    if (wifiP2pInfo.groupOwnerAddress != null) {
-                        socketManager.startClient(wifiP2pInfo.groupOwnerAddress, WifiDirectSocketManager.DEFAULT_PORT);
-                    }
-                }
-            });
-        }
+    public void onEndpointLost(String endpointId) {
+        runOnUiThread(() -> {
+            discoveredDevices.removeIf(d -> d.getEndpointId().equals(endpointId));
+            deviceAdapter.notifyDataSetChanged();
+            if (discoveredDevices.isEmpty()) {
+                tvEmptyDevices.setText("No nearby devices found.");
+                tvEmptyDevices.setVisibility(View.VISIBLE);
+            }
+        });
     }
 
     @Override
-    public void onDisconnected() {
-        isWifiConnected = false;
+    public void onConnectionInitiated(String endpointId, String endpointName) {
+        runOnUiThread(() -> {
+            tvConnectionStatus.setText("Connecting to " + endpointName + "...");
+            tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_discovering));
+        });
+    }
+
+    @Override
+    public void onConnected(String endpointId, String endpointName) {
+        runOnUiThread(() -> {
+            tvConnectionStatus.setText("Connected to " + endpointName);
+            tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
+            tvRoleDetails.setText("Peer: " + endpointName + " (High-Speed Link)");
+
+            btnDisconnect.setEnabled(true);
+            btnAdvertise.setEnabled(false);
+            btnDiscover.setEnabled(false);
+            updateSpeakButtonState();
+
+            if (receivedDataHistory.length() == 0) {
+                tvReceivedData.setText("Connected! Waiting for peer speech data...\n");
+            }
+            Toast.makeText(this, "Connected to " + endpointName + "!", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    @Override
+    public void onDisconnected(String endpointId) {
         runOnUiThread(() -> {
             tvConnectionStatus.setText("Disconnected");
             tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
-            tvRoleDetails.setText("Role: Not connected");
+            tvRoleDetails.setText("Connection: Google Nearby (Fast BLE + Wi-Fi)");
+
             btnDisconnect.setEnabled(false);
+            btnAdvertise.setEnabled(true);
+            btnDiscover.setEnabled(true);
             updateSpeakButtonState();
+
             tvSpeakingStatus.setVisibility(View.GONE);
             tvReceivedData.setText("Disconnected. Connect to another device to communicate.\n");
-        });
-
-        if (socketManager != null) {
-            socketManager.stop();
-        }
-    }
-
-    @Override
-    public void onThisDeviceChanged(WifiP2pDevice device) {
-        runOnUiThread(() -> {
-            if (device != null) {
-                String name = (device.deviceName != null && !device.deviceName.isEmpty())
-                        ? device.deviceName : "Unknown";
-                tvMyDeviceDetails.setText("My Device: " + name + " (" + device.deviceAddress + ")");
-            }
-        });
-    }
-
-    // ==================== SocketEventListener Callbacks ====================
-
-    @Override
-    public void onSocketConnected(boolean isServer, String remoteAddress) {
-        isWifiConnected = true;
-        runOnUiThread(() -> {
-            tvConnectionStatus.setText("Connected (Offline Socket Active)");
-            tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
-            updateSpeakButtonState();
+            Toast.makeText(this, "Disconnected", Toast.LENGTH_SHORT).show();
         });
     }
 
     @Override
     public void onMessageReceived(String message) {
         runOnUiThread(() -> {
-            // Displays received text from the peer mobile under "Received Data"
             appendReceivedData(message);
-            // Read the received message aloud with the offline Piper TTS engine
             if (ttsManager != null) {
                 ttsManager.speak(message);
             }
@@ -571,13 +526,27 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     @Override
-    public void onSocketDisconnected() {
-        runOnUiThread(() -> updateSpeakButtonState());
+    public void onError(String errorMessage) {
+        runOnUiThread(() -> {
+            Log.e(TAG, "Nearby Error: " + errorMessage);
+            Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
+        });
     }
 
     @Override
-    public void onError(String errorMessage) {
-        runOnUiThread(() -> Log.e(TAG, "Socket error: " + errorMessage));
+    public void onAdvertisingStarted() {
+        runOnUiThread(() -> {
+            tvConnectionStatus.setText("Advertising... (Discoverable)");
+            tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_discovering));
+            Toast.makeText(this, "Device is now discoverable via BLE beacons", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    @Override
+    public void onDiscoveryStarted() {
+        runOnUiThread(() -> {
+            Toast.makeText(this, "Scanning for nearby devices via BLE...", Toast.LENGTH_SHORT).show();
+        });
     }
 
     private void appendReceivedData(String message) {
@@ -589,43 +558,7 @@ public class MainActivity extends AppCompatActivity implements
         scrollReceivedData.post(() -> scrollReceivedData.fullScroll(View.FOCUS_DOWN));
     }
 
-    private static String getFailureReason(int reasonCode) {
-        switch (reasonCode) {
-            case WifiP2pManager.P2P_UNSUPPORTED:
-                return "Wi-Fi Direct not supported";
-            case WifiP2pManager.ERROR:
-                return "Internal Error";
-            case WifiP2pManager.BUSY:
-                return "Framework Busy";
-            default:
-                return "Error code " + reasonCode;
-        }
-    }
-
     // ==================== Lifecycle ====================
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (!isReceiverRegistered && receiver != null) {
-            ContextCompat.registerReceiver(
-                    this,
-                    receiver,
-                    intentFilter,
-                    ContextCompat.RECEIVER_EXPORTED
-            );
-            isReceiverRegistered = true;
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        if (isReceiverRegistered && receiver != null) {
-            unregisterReceiver(receiver);
-            isReceiverRegistered = false;
-        }
-    }
 
     @Override
     protected void onDestroy() {
@@ -637,17 +570,12 @@ public class MainActivity extends AppCompatActivity implements
             sttEngine.destroy();
             sttEngine = null;
         }
-        if (socketManager != null) {
-            socketManager.stop();
-        }
         if (ttsManager != null) {
             ttsManager.release();
             ttsManager = null;
         }
-        if (wifiP2pManager != null && channel != null) {
-            try {
-                wifiP2pManager.removeGroup(channel, null);
-            } catch (Exception ignored) {}
+        if (nearbyManager != null) {
+            nearbyManager.disconnect();
         }
     }
 }

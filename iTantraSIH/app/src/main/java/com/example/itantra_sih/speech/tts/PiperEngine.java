@@ -115,10 +115,19 @@ public class PiperEngine implements TTSEngine {
         });
     }
 
+    public boolean isReady() {
+        synchronized (LOCK) {
+            return !released && tts != null;
+        }
+    }
+
     private String extractEspeakData() throws IOException {
-        File dst = new File(context.getFilesDir(), ESPEAK_ASSET);
-        copyAssets(ESPEAK_ASSET, dst);
-        return new File(context.getFilesDir(), "lespk/espeak-ng-data").getAbsolutePath();
+        File espeakDir = new File(context.getFilesDir(), "lespk/espeak-ng-data");
+        if (!espeakDir.exists() || espeakDir.list() == null || espeakDir.list().length == 0) {
+            File dst = new File(context.getFilesDir(), ESPEAK_ASSET);
+            copyAssets(ESPEAK_ASSET, dst);
+        }
+        return espeakDir.getAbsolutePath();
     }
 
     private void copyAssets(String srcRel, File dstFile) throws IOException {

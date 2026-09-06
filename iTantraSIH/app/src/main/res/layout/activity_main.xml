@@ -30,7 +30,7 @@
                 android:id="@+id/tvTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wi-Fi Direct (Offline P2P)"
+                android:text="Offline Voice P2P"
                 android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="@color/black" />
@@ -40,7 +40,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Offline Voice-to-Text Peer Communication"
+                android:text="Ultra-Fast BLE Discovery + High-Speed Offline Voice Transfer"
                 android:textSize="13sp"
                 android:textColor="#666666" />
 
@@ -99,39 +99,65 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Role: Not connected"
+                        android:text="Connection: Google Nearby (Fast BLE + Wi-Fi)"
                         android:textSize="13sp"
                         android:textColor="#444444" />
 
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Action Controls -->
+            <!-- Action Controls (Advertise & Discover) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:orientation="horizontal">
 
-                <Button
-                    android:id="@+id/btnDiscover"
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAdvertise"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="6dp"
-                    android:text="Discover Devices" />
+                    android:text="Advertise"
+                    android:textAllCaps="false"
+                    android:textSize="14sp"
+                    app:cornerRadius="10dp" />
 
-                <Button
-                    android:id="@+id/btnDisconnect"
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDiscover"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="48dp"
                     android:layout_weight="1"
                     android:layout_marginStart="6dp"
-                    android:enabled="false"
-                    android:text="Disconnect"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+                    android:text="Discover"
+                    android:textAllCaps="false"
+                    android:textSize="14sp"
+                    app:cornerRadius="10dp" />
 
             </LinearLayout>
+
+            <!-- Disconnect Button (Prominent, Styled Danger Button) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDisconnect"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:enabled="false"
+                android:text="Disconnect Device"
+                android:textAllCaps="false"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                app:cornerRadius="10dp"
+                app:strokeWidth="1.5dp"
+                app:strokeColor="@color/disconnect_btn_stroke"
+                android:textColor="@color/disconnect_btn_text"
+                app:icon="@drawable/ic_disconnect"
+                app:iconGravity="textStart"
+                app:iconPadding="8dp"
+                app:iconTint="@color/disconnect_btn_text"
+                app:rippleColor="@color/disconnect_btn_ripple" />
 
             <!-- Peers List Section -->
             <TextView
@@ -148,7 +174,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="No devices found. Tap 'Discover Devices' to search."
+                android:text="No devices found. Tap 'Discover' or 'Advertise' to connect."
                 android:textSize="13sp"
                 android:textColor="#888888" />
 
@@ -164,7 +190,7 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Bottom Section: Received Data + Speak Button just above navigation bar -->
+    <!-- Bottom Section: Received Data + Language Dropdown + Speak Button just above navigation bar -->
     <LinearLayout
         android:id="@+id/bottomSection"
         android:layout_width="0dp"
@@ -179,7 +205,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Received Data Title & Model Status Header -->
+        <!-- Header: Received Data Title & Language Selector Dropdown -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -196,15 +222,38 @@
                 android:textStyle="bold"
                 android:textColor="@color/black" />
 
-            <TextView
-                android:id="@+id/tvModelStatus"
+            <!-- TTS Listen Button to speak/replay received text aloud in English -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPlayReceivedAudio"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:layout_marginEnd="4dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="🔊 Speak"
+                android:textSize="12sp"
+                android:textColor="#1976D2" />
+
+            <!-- Language Dropdown (Replaces old 'Model Ready' text) -->
+            <Spinner
+                android:id="@+id/spLanguage"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Model: Loading..."
-                android:textSize="12sp"
-                android:textStyle="italic"
-                android:textColor="#666666" />
+                android:spinnerMode="dropdown" />
+
         </LinearLayout>
+
+        <!-- Model Status Loading Subtitle -->
+        <TextView
+            android:id="@+id/tvModelStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Model: English (Ready)"
+            android:textSize="12sp"
+            android:textStyle="italic"
+            android:textColor="#666666" />
 
         <!-- Received Data Display Card -->
         <com.google.android.material.card.MaterialCardView
@@ -220,7 +269,7 @@
             <ScrollView
                 android:id="@+id/scrollReceivedData"
                 android:layout_width="match_parent"
-                android:layout_height="130dp"
+                android:layout_height="120dp"
                 android:fillViewport="true"
                 android:padding="10dp">
 
@@ -247,7 +296,7 @@
             android:textColor="#1976D2"
             android:visibility="gone" />
 
-        <!-- Simple Speak Button at the very end of screen -->
+        <!-- Simple Speak Button at the very end of screen just above navigation bar -->
         <Button
             android:id="@+id/btnToggleSpeaking"
             android:layout_width="match_parent"
