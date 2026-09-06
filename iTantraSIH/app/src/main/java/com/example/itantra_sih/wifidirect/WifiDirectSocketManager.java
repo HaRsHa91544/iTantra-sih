@@ -3,6 +3,7 @@ package com.example.itantra_sih.wifidirect;
 import android.util.Log;
 
 import com.example.itantra_sih.transport.MessageTransport;
+import com.example.itantra_sih.transport.SocketConnection;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -24,28 +25,26 @@ import java.util.concurrent.Executors;
  * This removes the newline-splitting bug of the previous println/readLine
  * transport and supports arbitrary message content.
  *
- * Connection lifecycle events are delivered through {@link SocketEventListener}.
- * Inbound payloads are delivered through the {@link MessageTransport.InboundListener}
- * so that the coordinator (not the UI) parses and routes incoming messages.
+ * Connection lifecycle events are delivered through
+ * {@link SocketConnection.ConnectionListener}; inbound payloads through
+ * {@link MessageTransport.InboundListener}, so the coordinator (not the UI)
+ * parses and routes incoming messages.
  */
-public class WifiDirectSocketManager implements MessageTransport {
+public class WifiDirectSocketManager implements SocketConnection, MessageTransport {
 
     private static final String TAG = "WifiDirectSocket";
-    public static final int DEFAULT_PORT = 8988;
+
     private static final int MAX_MESSAGE_BYTES = 256 * 1024;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int CONNECT_RETRIES = 5;
+    private static final int RETRY_DELAY_MS = 1000;
 
-    public interface SocketEventListener {
-        void onSocketConnected(boolean isServer, String remoteAddress);
-        void onSocketDisconnected();
-        void onError(String errorMessage);
-    }
-
-    private final SocketEventListener connectionListener;
-    private InboundListener inboundListener;
-    private ServerSocket serverSocket;
-    private Socket clientSocket;
-    private DataInputStream dataInputStream;
-    private DataOutputStream dataOutputStream;
+    private volatile ConnectionListener connectionListener;
+    private volatile InboundListener inboundListener;
+    private volatile ServerSocket serverSocket;
+    private volatile Socket clientSocket;
+    private volatile DataInputStream dataInputStream;
+    private volatile DataOutputStream dataOutputStream;
     private final ExecutorService sendExecutor = Executors.newSingleThreadExecutor();
 
     private Thread serverThread;
@@ -54,14 +53,16 @@ public class WifiDirectSocketManager implements MessageTransport {
 
     private volatile boolean isRunning = false;
 
-    public WifiDirectSocketManager(SocketEventListener connectionListener) {
-        this.connectionListener = connectionListener;
+    @Override
+    public void setConnectionListener(ConnectionListener listener) {
+        this.connectionListener = listener;
     }
 
     /**
      * Start as Group Owner (Host Server). Loops on accept() so the server
      * survives client disconnects and can accept a new connection.
      */
+    @Override
     public synchronized void startServer(int port) {
         stop();
         isRunning = true;
@@ -86,7 +87,7 @@ public class WifiDirectSocketManager implements MessageTransport {
                     setupStreams(socket);
 
                     if (connectionListener != null) {
-                        connectionListener.onSocketConnected(true, socket.getRemoteSocketAddress().toString());
+                        connectionListener.onConnected(true, socket.getRemoteSocketAddress().toString());
                     }
                     startReceiving();
                     // Wait until this client disconnects before accepting the next one.
@@ -113,34 +114,35 @@ public class WifiDirectSocketManager implements MessageTransport {
     }
 
     /**
-     * Start as Client connecting to Group Owner.
+     * Connect as a Client to the Group Owner, retrying a fixed number of times.
      */
-    public synchronized void startClient(InetAddress hostAddress, int port) {
+    @Override
+    public synchronized void connectToServer(InetAddress hostAddress, int port) {
         stop();
         isRunning = true;
         clientThread = new Thread(() -> {
-            int retries = 5;
+            int retries = CONNECT_RETRIES;
             Socket socket = null;
             while (isRunning && retries > 0) {
                 try {
                     Log.d(TAG, "Attempting connection to " + hostAddress.getHostAddress() + ":" + port);
                     socket = new Socket();
                     socket.bind(null);
-                    socket.connect(new InetSocketAddress(hostAddress, port), 5000);
+                    socket.connect(new InetSocketAddress(hostAddress, port), CONNECT_TIMEOUT_MS);
                     break;
                 } catch (IOException e) {
                     retries--;
                     Log.w(TAG, "Connection failed, retries left: " + retries + " error: " + e.getMessage());
                     try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException ignored) {}
+                        Thread.sleep(RETRY_DELAY_MS);
+                    } catch (InterruptedException ignored) {
+                        break;
+                    }
                 }
             }
 
             if (!isRunning) {
-                if (socket != null) {
-                    try { socket.close(); } catch (IOException ignored) {}
-                }
+                closeQuietly(socket);
                 return;
             }
 
@@ -150,7 +152,7 @@ public class WifiDirectSocketManager implements MessageTransport {
                     setupStreams(socket);
                     Log.d(TAG, "Connected to server successfully");
                     if (connectionListener != null) {
-                        connectionListener.onSocketConnected(false, socket.getRemoteSocketAddress().toString());
+                        connectionListener.onConnected(false, socket.getRemoteSocketAddress().toString());
                     }
                     startReceiving();
                 } catch (IOException e) {
@@ -204,7 +206,7 @@ public class WifiDirectSocketManager implements MessageTransport {
                     }
                 }
                 if (isRunning && connectionListener != null) {
-                    connectionListener.onSocketDisconnected();
+                    connectionListener.onDisconnected();
                 }
             }
         });
@@ -212,13 +214,14 @@ public class WifiDirectSocketManager implements MessageTransport {
     }
 
     /**
-     * Sends a message to the connected peer over local Wi-Fi Direct socket.
-     * First writes a 4-byte length prefix (big-endian) then the UTF-8 bytes.
+     * Send a payload to the connected peer. Writes a 4-byte length prefix
+     * (big-endian) followed by the UTF-8 bytes.
      */
     public void sendMessage(String message) {
         sendExecutor.execute(() -> {
             try {
-                if (dataOutputStream != null && clientSocket != null && clientSocket.isConnected() && !clientSocket.isClosed()) {
+                if (dataOutputStream != null && clientSocket != null
+                        && clientSocket.isConnected() && !clientSocket.isClosed()) {
                     byte[] payload = message.getBytes(StandardCharsets.UTF_8);
                     if (payload.length > MAX_MESSAGE_BYTES) {
                         throw new IOException("Message too large: " + payload.length + " bytes");
@@ -242,38 +245,19 @@ public class WifiDirectSocketManager implements MessageTransport {
     }
 
     /**
-     * Closes all connections, sockets, and threads.
+     * Close all connections, sockets, and threads. Idempotent.
      */
+    @Override
     public synchronized void stop() {
         isRunning = false;
-
-        try {
-            if (dataOutputStream != null) {
-                dataOutputStream.close();
-                dataOutputStream = null;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            if (dataInputStream != null) {
-                dataInputStream.close();
-                dataInputStream = null;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            if (clientSocket != null && !clientSocket.isClosed()) {
-                clientSocket.close();
-                clientSocket = null;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            if (serverSocket != null && !serverSocket.isClosed()) {
-                serverSocket.close();
-                serverSocket = null;
-            }
-        } catch (Exception ignored) {}
+        closeQuietly(dataOutputStream);
+        dataOutputStream = null;
+        closeQuietly(dataInputStream);
+        dataInputStream = null;
+        closeQuietly(clientSocket);
+        clientSocket = null;
+        closeQuietly(serverSocket);
+        serverSocket = null;
 
         if (serverThread != null) {
             serverThread.interrupt();
@@ -290,7 +274,8 @@ public class WifiDirectSocketManager implements MessageTransport {
         notifyAll();
     }
 
-    /** Shuts down the send executor. Call before dropping the last reference. */
+    /** Stop the link and release the send executor. Call before dropping the last reference. */
+    @Override
     public synchronized void shutdown() {
         stop();
         sendExecutor.shutdownNow();
@@ -311,5 +296,14 @@ public class WifiDirectSocketManager implements MessageTransport {
     @Override
     public void stopAndShutdown() {
         shutdown();
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (Exception e) {
+            Log.d(TAG, "close failed: " + e.getMessage());
+        }
     }
 }

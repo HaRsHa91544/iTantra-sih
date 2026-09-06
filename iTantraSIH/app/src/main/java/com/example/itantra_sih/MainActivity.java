@@ -93,9 +93,6 @@ public class MainActivity extends AppCompatActivity implements
     private final List<WifiP2pDevice> peerList = new ArrayList<>();
     private DeviceAdapter deviceAdapter;
 
-    // Offline Socket Manager (connection lifecycle only; payloads go via coordinator)
-    private WifiDirectSocketManager socketManager;
-
     private boolean isReceiverRegistered = false;
 
     @Override
@@ -138,23 +135,6 @@ public class MainActivity extends AppCompatActivity implements
 
         deviceAdapter = new DeviceAdapter(this, peerList);
         lvDevices.setAdapter(deviceAdapter);
-
-        socketManager = new WifiDirectSocketManager(new WifiDirectSocketManager.SocketEventListener() {
-            @Override
-            public void onSocketConnected(boolean isServer, String remoteAddress) {
-                MainActivity.this.onSocketConnected(isServer, remoteAddress);
-            }
-
-            @Override
-            public void onSocketDisconnected() {
-                MainActivity.this.onSocketDisconnected();
-            }
-
-            @Override
-            public void onError(String errorMessage) {
-                MainActivity.this.onSocketError(errorMessage);
-            }
-        });
     }
 
     private void initWifiDirect() {
@@ -176,20 +156,22 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     private void initEngines() {
-        // Black boxes are created here and handed to the coordinator.
+        // Black boxes are created here as a composition root and handed to
+        // the coordinator; the UI never touches the modules directly.
         sttEngine = new OfflineSTT();
         ttsEngine = new PiperEngine(this);
+        WifiDirectSocketManager link = new WifiDirectSocketManager();
 
-        voiceCommunication = new VoiceCommunication(sttEngine, ttsEngine, socketManager);
+        voiceCommunication = new VoiceCommunication(sttEngine, ttsEngine, link, link);
         voiceCommunication.setListener(this);
 
-        tvModelStatus.setText("Model: Loading...");
+        tvModelStatus.setText(R.string.model_loading);
         sttEngine.init(this, new STTEngine.OnInitListener() {
             @Override
             public void onReady() {
                 runOnUiThread(() -> {
                     isModelReady = true;
-                    tvModelStatus.setText("Model: Ready");
+                    tvModelStatus.setText(R.string.model_ready);
                     updateSpeakButtonState();
                 });
             }
@@ -197,8 +179,10 @@ public class MainActivity extends AppCompatActivity implements
             @Override
             public void onError(Exception e) {
                 runOnUiThread(() -> {
-                    tvModelStatus.setText("Model: Failed");
-                    Toast.makeText(MainActivity.this, "Failed to load speech model: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    tvModelStatus.setText(R.string.model_failed);
+                    Toast.makeText(MainActivity.this,
+                            getString(R.string.model_failed_detail, String.valueOf(e.getMessage())),
+                            Toast.LENGTH_SHORT).show();
                 });
             }
         });
@@ -217,11 +201,11 @@ public class MainActivity extends AppCompatActivity implements
         // Speak Button: Takes voice input via STT, sends through the coordinator
         btnToggleSpeaking.setOnClickListener(v -> {
             if (!isWifiConnected) {
-                Toast.makeText(this, "Connect to another device via Wi-Fi Direct first", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, R.string.need_wifi_connection, Toast.LENGTH_SHORT).show();
                 return;
             }
             if (!isModelReady) {
-                Toast.makeText(this, "Speech model is still loading, please wait...", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, R.string.model_still_loading, Toast.LENGTH_SHORT).show();
                 return;
             }
             if (isRecording) {
@@ -239,16 +223,16 @@ public class MainActivity extends AppCompatActivity implements
     private void updateSpeakButtonState() {
         if (!isWifiConnected) {
             btnToggleSpeaking.setEnabled(false);
-            btnToggleSpeaking.setText("Start speaking");
+            btnToggleSpeaking.setText(R.string.start_speaking);
             if (isRecording) {
                 stopSpeaking();
             }
         } else if (!isModelReady) {
             btnToggleSpeaking.setEnabled(false);
-            btnToggleSpeaking.setText("Loading speech model...");
+            btnToggleSpeaking.setText(R.string.model_loading_speech);
         } else {
             btnToggleSpeaking.setEnabled(true);
-            btnToggleSpeaking.setText(isRecording ? "Stop Speaking" : "Start speaking");
+            btnToggleSpeaking.setText(isRecording ? R.string.stop_speaking : R.string.start_speaking);
         }
     }
 
@@ -275,7 +259,7 @@ public class MainActivity extends AppCompatActivity implements
         isRecording = true;
         updateSpeakButtonState();
         tvSpeakingStatus.setVisibility(View.VISIBLE);
-        tvSpeakingStatus.setText("Listening... Speak now");
+        tvSpeakingStatus.setText(R.string.listening_speak);
     }
 
     private void stopSpeaking() {
@@ -327,34 +311,34 @@ public class MainActivity extends AppCompatActivity implements
                 }
             }
             if (allGranted) {
-                Toast.makeText(this, "Permissions granted for Wi-Fi Direct", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, R.string.permissions_granted, Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "Wi-Fi Direct permissions are required for discovery", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, R.string.permissions_required, Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_RECORD_AUDIO_PERMISSION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startSpeaking();
             } else {
-                Toast.makeText(this, "Microphone permission is required to record audio", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, R.string.mic_permission_required, Toast.LENGTH_SHORT).show();
             }
         }
     }
 
     private void startPeerDiscovery() {
         if (wifiP2pManager == null || channel == null) {
-            Toast.makeText(this, "Wi-Fi Direct is not supported on this device", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.wifi_p2p_unsupported_device, Toast.LENGTH_SHORT).show();
             return;
         }
 
         checkAndRequestPermissions();
 
         try {
-            tvEmptyDevices.setText("Searching for nearby devices...");
+            tvEmptyDevices.setText(R.string.searching_devices);
             wifiP2pManager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
                 @Override
                 public void onSuccess() {
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Discovery started", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(MainActivity.this, R.string.discovery_started, Toast.LENGTH_SHORT).show();
                         btnDiscover.setEnabled(false);
                         btnDiscover.postDelayed(() -> btnDiscover.setEnabled(true), 10000);
                     });
@@ -364,14 +348,16 @@ public class MainActivity extends AppCompatActivity implements
                 public void onFailure(int reasonCode) {
                     runOnUiThread(() -> {
                         String reason = getFailureReason(reasonCode);
-                        Toast.makeText(MainActivity.this, "Discovery failed: " + reason, Toast.LENGTH_SHORT).show();
-                        tvEmptyDevices.setText("Discovery failed (" + reason + "). Make sure Wi-Fi & Location are enabled.");
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.discovery_failed_reason, reason),
+                                Toast.LENGTH_SHORT).show();
+                        tvEmptyDevices.setText(getString(R.string.discovery_failed_hint, reason));
                     });
                 }
             });
         } catch (SecurityException e) {
             Log.e(TAG, "SecurityException during discoverPeers", e);
-            Toast.makeText(this, "Permission missing for peer discovery", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.discovery_permission_missing, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -380,10 +366,10 @@ public class MainActivity extends AppCompatActivity implements
                 ? device.deviceName : device.deviceAddress;
 
         new AlertDialog.Builder(this)
-                .setTitle("Connect to Device")
-                .setMessage("Do you want to connect to " + deviceName + " via Wi-Fi Direct?")
-                .setPositiveButton("Connect", (dialog, which) -> connectToDevice(device))
-                .setNegativeButton("Cancel", null)
+                .setTitle(R.string.connect_dialog_title)
+                .setMessage(getString(R.string.connect_dialog_message, deviceName))
+                .setPositiveButton(R.string.connect, (dialog, which) -> connectToDevice(device))
+                .setNegativeButton(R.string.cancel, null)
                 .show();
     }
 
@@ -395,7 +381,7 @@ public class MainActivity extends AppCompatActivity implements
         config.wps.setup = WpsInfo.PBC;
 
         runOnUiThread(() -> {
-            tvConnectionStatus.setText("Connecting...");
+            tvConnectionStatus.setText(R.string.connecting);
             tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_discovering));
         });
 
@@ -404,7 +390,9 @@ public class MainActivity extends AppCompatActivity implements
                 @Override
                 public void onSuccess() {
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Connection initiated to " + device.deviceName, Toast.LENGTH_SHORT).show();
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.connection_initiated, device.deviceName),
+                                Toast.LENGTH_SHORT).show();
                     });
                 }
 
@@ -412,15 +400,17 @@ public class MainActivity extends AppCompatActivity implements
                 public void onFailure(int reasonCode) {
                     runOnUiThread(() -> {
                         String reason = getFailureReason(reasonCode);
-                        Toast.makeText(MainActivity.this, "Connection failed: " + reason, Toast.LENGTH_SHORT).show();
-                        tvConnectionStatus.setText("Disconnected");
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.connection_failed, reason),
+                                Toast.LENGTH_SHORT).show();
+                        tvConnectionStatus.setText(R.string.disconnected);
                         tvConnectionStatus.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.status_disconnected));
                     });
                 }
             });
         } catch (SecurityException e) {
             Log.e(TAG, "SecurityException during connect", e);
-            Toast.makeText(this, "Permission missing to connect to peer", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.connect_permission_missing, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -430,7 +420,7 @@ public class MainActivity extends AppCompatActivity implements
                 @Override
                 public void onSuccess() {
                     onDisconnected();
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Disconnected successfully", Toast.LENGTH_SHORT).show());
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, R.string.disconnected_success, Toast.LENGTH_SHORT).show());
                 }
 
                 @Override
@@ -440,8 +430,8 @@ public class MainActivity extends AppCompatActivity implements
                 }
             });
         }
-        if (socketManager != null) {
-            socketManager.stop();
+        if (voiceCommunication != null) {
+            voiceCommunication.stopConnection();
         }
     }
 
@@ -451,9 +441,9 @@ public class MainActivity extends AppCompatActivity implements
     public void onWifiDirectEnabled(boolean isEnabled) {
         runOnUiThread(() -> {
             if (!isEnabled) {
-                tvConnectionStatus.setText("Wi-Fi Disabled");
+                tvConnectionStatus.setText(R.string.wifi_disabled);
                 tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
-                Toast.makeText(this, "Please enable Wi-Fi for Wi-Fi Direct", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, R.string.wifi_enable_request, Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -467,7 +457,7 @@ public class MainActivity extends AppCompatActivity implements
                 tvEmptyDevices.setVisibility(View.GONE);
                 lvDevices.setVisibility(View.VISIBLE);
             } else {
-                tvEmptyDevices.setText("No nearby Wi-Fi Direct devices found.");
+                tvEmptyDevices.setText(R.string.no_devices_found);
                 tvEmptyDevices.setVisibility(View.VISIBLE);
             }
             deviceAdapter.notifyDataSetChanged();
@@ -483,27 +473,29 @@ public class MainActivity extends AppCompatActivity implements
         if (wifiP2pInfo != null && wifiP2pInfo.groupFormed) {
             isWifiConnected = true;
             runOnUiThread(() -> {
-                tvConnectionStatus.setText("Connected");
+                tvConnectionStatus.setText(R.string.connected);
                 tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
 
                 btnDisconnect.setEnabled(true);
                 updateSpeakButtonState();
 
                 if (receivedDataHistory.length() == 0) {
-                    tvReceivedData.setText("Connected! Waiting for speech data from peer...\n");
+                    tvReceivedData.setText(R.string.connected_waiting);
                 }
 
                 if (wifiP2pInfo.isGroupOwner) {
-                    tvRoleDetails.setText("Role: Group Owner (Host) | Local IP: " +
-                            (wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
-                    // Start host server socket completely offline
-                    socketManager.startServer(WifiDirectSocketManager.DEFAULT_PORT);
+                    tvRoleDetails.setText(getString(R.string.role_group_owner_ip,
+                            wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
+                    // Host the offline voice link
+                    if (voiceCommunication != null) {
+                        voiceCommunication.startConnection(true, wifiP2pInfo.groupOwnerAddress);
+                    }
                 } else {
-                    tvRoleDetails.setText("Role: Client | Host IP: " +
-                            (wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
-                    // Connect client socket directly to host IP completely offline
-                    if (wifiP2pInfo.groupOwnerAddress != null) {
-                        socketManager.startClient(wifiP2pInfo.groupOwnerAddress, WifiDirectSocketManager.DEFAULT_PORT);
+                    tvRoleDetails.setText(getString(R.string.role_client_ip,
+                            wifiP2pInfo.groupOwnerAddress != null ? wifiP2pInfo.groupOwnerAddress.getHostAddress() : "N/A"));
+                    // Join the host's offline voice link
+                    if (voiceCommunication != null) {
+                        voiceCommunication.startConnection(false, wifiP2pInfo.groupOwnerAddress);
                     }
                 }
             });
@@ -514,17 +506,17 @@ public class MainActivity extends AppCompatActivity implements
     public void onDisconnected() {
         isWifiConnected = false;
         runOnUiThread(() -> {
-            tvConnectionStatus.setText("Disconnected");
+            tvConnectionStatus.setText(R.string.disconnected);
             tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
-            tvRoleDetails.setText("Role: Not connected");
+            tvRoleDetails.setText(R.string.role_not_connected);
             btnDisconnect.setEnabled(false);
             updateSpeakButtonState();
             tvSpeakingStatus.setVisibility(View.GONE);
-            tvReceivedData.setText("Disconnected. Connect to another device to communicate.\n");
+            tvReceivedData.setText(R.string.disconnected_reconnect);
         });
 
-        if (socketManager != null) {
-            socketManager.stop();
+        if (voiceCommunication != null) {
+            voiceCommunication.stopConnection();
         }
     }
 
@@ -534,39 +526,35 @@ public class MainActivity extends AppCompatActivity implements
             if (device != null) {
                 String name = (device.deviceName != null && !device.deviceName.isEmpty())
                         ? device.deviceName : "Unknown";
-                tvMyDeviceDetails.setText("My Device: " + name + " (" + device.deviceAddress + ")");
+                tvMyDeviceDetails.setText(getString(R.string.my_device_details, name, device.deviceAddress));
             }
         });
     }
 
-    // ==================== Socket Connection Callbacks ====================
+    // ==================== VoiceCommunication.Listener ====================
 
-    private void onSocketConnected(boolean isServer, String remoteAddress) {
+    @Override
+    public void onConnectionEstablished(boolean isServer, String remoteAddress) {
         isWifiConnected = true;
         runOnUiThread(() -> {
-            tvConnectionStatus.setText("Connected (Offline Socket Active)");
+            tvConnectionStatus.setText(R.string.connected_socket_active);
             tvConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
             updateSpeakButtonState();
         });
     }
 
-    private void onSocketDisconnected() {
+    @Override
+    public void onConnectionLost() {
         isWifiConnected = false;
         runOnUiThread(() -> updateSpeakButtonState());
     }
-
-    private void onSocketError(String errorMessage) {
-        Log.e(TAG, "Socket error: " + errorMessage);
-    }
-
-    // ==================== VoiceCommunication.Listener ====================
 
     @Override
     public void onPartialResult(String hypothesis) {
         runOnUiThread(() -> {
             if (isRecording && !hypothesis.isEmpty()) {
                 tvSpeakingStatus.setVisibility(View.VISIBLE);
-                tvSpeakingStatus.setText("Listening: " + hypothesis + "...");
+                tvSpeakingStatus.setText(getString(R.string.listening_partial, hypothesis));
             }
         });
     }
@@ -575,7 +563,7 @@ public class MainActivity extends AppCompatActivity implements
     public void onMessageSent(String text) {
         runOnUiThread(() -> {
             tvSpeakingStatus.setVisibility(View.VISIBLE);
-            tvSpeakingStatus.setText("Sent: \"" + text + "\"");
+            tvSpeakingStatus.setText(getString(R.string.message_sent, text));
         });
     }
 
@@ -588,7 +576,7 @@ public class MainActivity extends AppCompatActivity implements
     public void onTtsStarted(String text) {
         runOnUiThread(() -> {
             tvSpeakingStatus.setVisibility(View.VISIBLE);
-            tvSpeakingStatus.setText("Speaking: \"" + text + "\"...");
+            tvSpeakingStatus.setText(getString(R.string.speaking_text, text));
         });
     }
 
@@ -653,9 +641,6 @@ public class MainActivity extends AppCompatActivity implements
         if (voiceCommunication != null) {
             voiceCommunication.release();
             voiceCommunication = null;
-        }
-        if (socketManager != null) {
-            socketManager.shutdown();
         }
         if (wifiP2pManager != null && channel != null) {
             try {

@@ -1,7 +1,6 @@
 # Do not let core.autocrlf rewrite these binary/model/serialized-data assets
-app/src/main/assets/piper/tokens.txt -text
-app/src/main/assets/**/*.onnx binary
-app/src/main/assets/**/*.dict binary
-app/src/main/assets/**/*_dict binary
+tokens.txt -text
 *.onnx binary
+*.dict binary
+*_dict binary
 *.aar binary

@@ -4,20 +4,23 @@ import com.example.itantra_sih.models.Message;
 import com.example.itantra_sih.speech.stt.STTEngine;
 import com.example.itantra_sih.speech.tts.TTSEngine;
 import com.example.itantra_sih.transport.MessageTransport;
+import com.example.itantra_sih.transport.SocketConnection;
+import com.example.itantra_sih.wifidirect.WifiDirectSocketManager;
 
+import java.net.InetAddress;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Sprint 4 coordinator. Wires the three black boxes together:
+ * Voice link coordinator. Wires the three black boxes together:
  *
  *   Phone A: speak -> STT -> Message -> send(Transport)
  *   Phone B: recv(Transport) -> Message -> text -> TTS -> speaker
  *
  * It deliberately contains NO STT model code, no TTS model code, and no
- * socket code. It only knows three interfaces (STTEngine, TTSEngine,
- * MessageTransport), so any implementation of Sprint 1-3 can be swapped in
- * without touching these layers.
+ * socket code. It only knows the interfaces STTEngine, TTSEngine,
+ * MessageTransport and SocketConnection, so any implementation of the
+ * individual modules can be swapped in without touching these layers.
  */
 public class VoiceCommunication implements STTEngine.OnResultListener {
 
@@ -25,6 +28,8 @@ public class VoiceCommunication implements STTEngine.OnResultListener {
      * UI-facing notifications. All callbacks arrive on the main thread.
      */
     public interface Listener {
+        void onConnectionEstablished(boolean isServer, String remoteAddress);
+        void onConnectionLost();
         void onPartialResult(String hypothesis);
         void onMessageSent(String text);
         void onMessageReceived(String text);
@@ -35,21 +40,60 @@ public class VoiceCommunication implements STTEngine.OnResultListener {
     private final STTEngine sttEngine;
     private final TTSEngine ttsEngine;
     private final MessageTransport transport;
+    private final SocketConnection connection;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    private Listener listener;
+    private volatile Listener listener;
 
-    public VoiceCommunication(STTEngine sttEngine, TTSEngine ttsEngine, MessageTransport transport) {
+    public VoiceCommunication(STTEngine sttEngine, TTSEngine ttsEngine,
+                              MessageTransport transport, WifiDirectSocketManager connection) {
         this.sttEngine = sttEngine;
         this.ttsEngine = ttsEngine;
         this.transport = transport;
+        this.connection = connection;
 
         this.sttEngine.setOnResultListener(this);
         this.transport.setInboundListener(this::handleInboundPayload);
+        this.connection.setConnectionListener(new SocketConnection.ConnectionListener() {
+            @Override
+            public void onConnected(boolean isServer, String remoteAddress) {
+                if (listener != null) {
+                    listener.onConnectionEstablished(isServer, remoteAddress);
+                }
+            }
+
+            @Override
+            public void onDisconnected() {
+                if (listener != null) {
+                    listener.onConnectionLost();
+                }
+            }
+
+            @Override
+            public void onError(String message) {
+                if (listener != null) {
+                    listener.onError("Connection error: " + message);
+                }
+            }
+        });
     }
 
     public void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    /** Open the offline voice link: server when group owner, client otherwise. */
+    public void startConnection(boolean isGroupOwner, InetAddress groupOwnerAddress) {
+        if (isGroupOwner) {
+            connection.startServer(SocketConnection.DEFAULT_PORT);
+        } else if (groupOwnerAddress != null) {
+            connection.connectToServer(groupOwnerAddress, SocketConnection.DEFAULT_PORT);
+        }
+    }
+
+    /** Stop the offline voice link without releasing the engines. */
+    public void stopConnection() {
+        connection.stop();
     }
 
     /**
@@ -132,6 +176,7 @@ public class VoiceCommunication implements STTEngine.OnResultListener {
     public void release() {
         executor.shutdownNow();
         transport.stopAndShutdown();
+        connection.shutdown();
         ttsEngine.release();
         sttEngine.destroy();
     }

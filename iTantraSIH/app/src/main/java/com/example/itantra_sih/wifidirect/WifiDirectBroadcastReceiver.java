@@ -7,6 +7,8 @@ import android.net.NetworkInfo;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
+import android.os.Build;
+import android.os.Parcelable;
 import android.util.Log;
 
 import java.util.Collection;
@@ -68,28 +70,36 @@ public class WifiDirectBroadcastReceiver extends BroadcastReceiver {
             case WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION:
                 Log.d(TAG, "WIFI_P2P_CONNECTION_CHANGED");
                 if (manager != null && channel != null) {
-                    NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+                    NetworkInfo networkInfo = getParcelableExtra(
+                            intent, WifiP2pManager.EXTRA_NETWORK_INFO, NetworkInfo.class);
                     if (networkInfo != null && networkInfo.isConnected()) {
                         manager.requestConnectionInfo(channel, info -> {
                             if (listener != null && info != null) {
                                 listener.onConnectionInfoAvailable(info);
                             }
                         });
-                    } else {
-                        if (listener != null) {
-                            listener.onDisconnected();
-                        }
+                    } else if (listener != null) {
+                        listener.onDisconnected();
                     }
                 }
                 break;
 
             case WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION:
-                WifiP2pDevice device = intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE);
+                WifiP2pDevice device = getParcelableExtra(
+                        intent, WifiP2pManager.EXTRA_WIFI_P2P_DEVICE, WifiP2pDevice.class);
                 Log.d(TAG, "WIFI_P2P_THIS_DEVICE_CHANGED: " + (device != null ? device.deviceName : "null"));
                 if (listener != null && device != null) {
                     listener.onThisDeviceChanged(device);
                 }
                 break;
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static <T extends Parcelable> T getParcelableExtra(Intent intent, String key, Class<T> type) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return intent.getParcelableExtra(key, type);
+        }
+        return intent.getParcelableExtra(key);
     }
 }

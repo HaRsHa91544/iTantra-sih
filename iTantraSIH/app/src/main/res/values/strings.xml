@@ -1,3 +1,67 @@
 <resources>
     <string name="app_name">iTantra-SIH</string>
+    <string name="app_title">Wi-Fi Direct (Offline P2P)</string>
+    <string name="app_subtitle">Offline Voice-to-Text Peer Communication</string>
+
+    <string name="status_label">Status: </string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="connected_socket_active">Connected (Offline Socket Active)</string>
+    <string name="wifi_disabled">Wi-Fi Disabled</string>
+    <string name="connecting">Connecting…</string>
+    <string name="wifi_enable_request">Please enable Wi-Fi for Wi-Fi Direct</string>
+
+    <string name="my_device_init">My Device: Initializing…</string>
+    <string name="my_device_details">My Device: %1$s (%2$s)</string>
+    <string name="role_not_connected">Role: Not connected</string>
+    <string name="role_group_owner_ip">Role: Group Owner (Host) | Local IP: %1$s</string>
+    <string name="role_client_ip">Role: Client | Host IP: %1$s</string>
+
+    <string name="discover_devices">Discover Devices</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="nearby_devices_header">Available Nearby Devices</string>
+    <string name="no_devices_found">No nearby Wi-Fi Direct devices found.</string>
+    <string name="no_devices_hint">No devices found. Tap \'Discover Devices\' to search.</string>
+    <string name="searching_devices">Searching for nearby devices…</string>
+    <string name="discovery_started">Discovery started</string>
+    <string name="discovery_failed_reason">Discovery failed: %1$s</string>
+    <string name="discovery_failed_hint">Discovery failed (%1$s). Make sure Wi-Fi &amp; Location are enabled.</string>
+    <string name="discovery_permission_missing">Permission missing for peer discovery</string>
+
+    <string name="connect_dialog_title">Connect to Device</string>
+    <string name="connect_dialog_message">Do you want to connect to %1$s via Wi-Fi Direct?</string>
+    <string name="connect">Connect</string>
+    <string name="cancel">Cancel</string>
+    <string name="connection_initiated">Connection initiated to %1$s</string>
+    <string name="connection_failed">Connection failed: %1$s</string>
+    <string name="connect_permission_missing">Permission missing to connect to peer</string>
+    <string name="disconnected_success">Disconnected successfully</string>
+
+    <string name="received_data_title">Received Data</string>
+    <string name="waiting_for_data">Waiting for data from peer device…\n</string>
+    <string name="connected_waiting">Connected! Waiting for speech data from peer…\n</string>
+    <string name="disconnected_reconnect">Disconnected. Connect to another device to communicate.\n</string>
+
+    <string name="model_loading">Model: Loading…</string>
+    <string name="model_ready">Model: Ready</string>
+    <string name="model_failed">Model: Failed</string>
+    <string name="model_failed_detail">Failed to load speech model: %1$s</string>
+    <string name="model_still_loading">Speech model is still loading, please wait…</string>
+    <string name="model_loading_speech">Loading speech model…</string>
+
+    <string name="start_speaking">Start speaking</string>
+    <string name="stop_speaking">Stop Speaking</string>
+    <string name="listening_speak">Listening… Speak now</string>
+    <string name="listening_partial">Listening: %1$s…</string>
+    <string name="message_sent">Sent: "%1$s"</string>
+    <string name="speaking_text">Speaking: "%1$s"…</string>
+
+    <string name="need_wifi_connection">Connect to another device via Wi-Fi Direct first</string>
+    <string name="permissions_granted">Permissions granted for Wi-Fi Direct</string>
+    <string name="permissions_required">Wi-Fi Direct permissions are required for discovery</string>
+    <string name="mic_permission_required">Microphone permission is required to record audio</string>
+    <string name="wifi_p2p_unsupported_device">Wi-Fi Direct is not supported on this device</string>
+
+    <string name="device_name_placeholder">Device Name</string>
+    <string name="status_available">Status: Available</string>
 </resources>

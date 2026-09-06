@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -7,13 +8,14 @@
     android:paddingStart="16dp"
     android:paddingEnd="16dp"
     android:paddingTop="12dp"
-    android:paddingBottom="12dp">
+    android:paddingBottom="12dp"
+    tools:ignore="Overdraw">
 
     <TextView
         android:id="@+id/tvDeviceName"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Device Name"
+        android:text="@string/device_name_placeholder"
         android:textSize="16sp"
         android:textStyle="bold"
         android:textColor="@android:color/black" />
@@ -23,7 +25,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:text="Status: Available"
+        android:text="@string/status_available"
         android:textSize="13sp"
         android:textColor="@android:color/darker_gray" />
 
